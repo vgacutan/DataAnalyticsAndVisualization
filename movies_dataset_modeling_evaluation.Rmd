@@ -1,0 +1,477 @@
+---
+title: 'Modeling and Evaluation'
+output:
+  html_document: default
+  pdf_document: default
+---
+#### vgacutan3 
+# Data
+
+_Note that the movies dataset was prepared by Dr. Guy Lebanon._
+
+# Objective
+
+Your goal is to build a linear regression model that can predict the `Gross` revenue earned by a movie based on other variables.
+
+```{r}
+load('movies_merged')
+```
+
+This creates an object of the same name (`movies_merged`). For convenience, you can copy it to `df` and start using it:
+
+```{r}
+df = movies_merged
+cat("Dataset has", dim(df)[1], "rows and", dim(df)[2], "columns", end="\n", file="")
+colnames(df)
+```
+
+## Load R packages
+
+Load any R packages that you will need to use. You can come back to this chunk, edit it and re-run to load any additional packages later.
+
+```{r}
+library(ggplot2)
+library(reshape)
+library(tm)
+library(plyr)
+```
+
+
+# Data Preprocessing
+
+Before we start building models, we should clean up the dataset and perform any preprocessing steps that may be necessary. 
+## 1. Remove non-movie rows
+
+```{r}
+# TODO: Remove all rows from df that do not correspond to movies
+moviesOnly = subset(df, Type == "movie")
+cat("Dataset Movies Only has", dim(moviesOnly)[1], "rows and", dim(moviesOnly)[2], "columns", end="\n", file="")
+
+```
+
+## 2. Drop rows with missing `Gross` value
+
+Since our goal is to model `Gross` revenue against other variables, rows that have missing `Gross` values are not useful to us.
+
+```{r}
+moviesOnly2 = moviesOnly
+moviesOnly2 = moviesOnly2[complete.cases(moviesOnly2$Gross),]
+cat("Dataset moviesOnly2 has", dim(moviesOnly2)[1], "rows and", dim(moviesOnly2)[2], "columns", end="\n", file="")
+```
+
+## 3. Exclude movies released prior to 2000
+
+Inflation and other global financial factors may affect the revenue earned by movies during certain periods of time.
+
+```{r}
+moviesOnly3 = moviesOnly2
+moviesOnly3 = subset(moviesOnly2, Year >='2000')
+cat("Dataset moviesOnly3 has", dim(moviesOnly3)[1], "rows and", dim(moviesOnly3)[2], "columns", end="\n", file="")
+```
+
+## 4. Eliminate mismatched rows
+
+```{r}
+moviesOnly4 = moviesOnly3
+moviesOnly4 = subset(moviesOnly4, !is.na(moviesOnly4$Released))
+moviesOnly4$Released = as.numeric(format(as.Date(moviesOnly4$Released, format = "%Y-%m-%d"), "%Y"))
+moviesOnly4 = subset(moviesOnly4, Released == Year | Gross>0 | Released ==Year+1)
+cat("Dataset moviesOnly4 has", dim(moviesOnly4)[1], "rows and", dim(moviesOnly4)[2], "columns", end="\n", file="")
+```
+
+## 5. Drop `Domestic_Gross` column
+
+`Domestic_Gross` is basically the amount of revenue a movie earned within the US. Understandably, it is very highly correlated with `Gross` and is in fact equal to it for movies that were not released globally. Hence, it should be removed for modeling purposes.
+
+```{r}
+moviesOnly5 = moviesOnly4
+moviesOnly5$Domestic_Gross = NULL
+colnames(moviesOnly5)
+```
+
+## 6. Process `Runtime` column
+
+```{r,message=FALSE, warning=FALSE}
+moviesOnly6 = moviesOnly5
+moviesOnly6$Runtime = substr(moviesOnly6$Runtime,0,nchar(moviesOnly6$Runtime)-4)
+moviesOnly6$Runtime = as.numeric(as.character(moviesOnly6$Runtime))
+
+```
+
+Perform any additional preprocessing steps that you find necessary, such as dealing with missing values or highly correlated columns.
+
+```{r}
+moviesOnlyFinal = subset(moviesOnly6, !is.na(moviesOnly6$Runtime))
+```
+
+_**Note**: Do NOT convert categorical variables (like `Genre`) into binary columns yet._
+
+## Final preprocessed dataset
+
+```{r}
+cat("Dataset moviesOnlyFinal has", dim(moviesOnlyFinal)[1], "rows and", dim(moviesOnlyFinal)[2], "columns", end="\n", file="")
+colnames(moviesOnlyFinal)
+```
+
+# Evaluation Strategy
+
+1. Randomly divide the rows into two sets of sizes 5% and 95%.
+2. Use the first set for training and the second for testing.
+3. Compute the Root Mean Squared Error (RMSE) on the train and test sets.
+4. Repeat the above data partition and model training and evaluation 10 times and average the RMSE results so the results stabilize.
+5. Repeat the above steps for different proportions of train and test sizes: 10%-90%, 15%-85%, ..., 95%-5% (total 19 splits including the initial 5%-95%).
+6. Generate a graph of the averaged train and test RMSE as a function of the train set size (%).
+
+## 1. Numeric variables
+
+Use linear regression to predict `Gross` based on all available _numeric_ variables.
+
+```{r}
+moviesOnlyFinal_df = moviesOnlyFinal
+moviesOnlyFinal_df = moviesOnlyFinal[, c('Runtime', 'imdbRating', 'imdbVotes','tomatoRating','tomatoReviews','tomatoFresh','tomatoRotten','tomatoUserMeter','tomatoUserRating','tomatoUserReviews','Budget','Gross')]
+
+for( i in 2:10){
+moviesOnlyFinal_df[, i][is.na(moviesOnlyFinal_df[,i])] <- 
+  median(moviesOnlyFinal_df[,i], na.rm = T)
+}
+
+dataPartition = function(df, setSize){
+  trn_sample = floor(setSize*nrow(df))
+  trn_rand_idx = sample(seq_len(nrow(df)), size = trn_sample)
+  xtrain = df[trn_rand_idx, ]
+  ytrain = df[-trn_rand_idx, ]
+  return(list(xtrain, ytrain))
+}
+  
+lmRMSE = function(df, setSize){
+  dataSample = dataPartition(df, setSize)
+  trn_x = dataSample[[1]]
+  tst_y = dataSample[[2]]
+  Mod_t1 = lm(Gross~., trn_x)
+  pred_y_tst = predict(Mod_t1, newdate=tst_y)
+  RMSE_trn = sqrt(mean((trn_x$Gross - predict(Mod_t1, trn_x)) ^ 2))
+  RMSE_tst = sqrt(mean((tst_y$Gross - predict(Mod_t1, tst_y)) ^ 2))
+  return(list(RMSE_trn,RMSE_tst))
+}
+
+avgRMSE1 = function(df,setSize, max_iter){
+  each_mse_tr <- c(0, 0)
+  each_mse_ts <- c(0, 0)
+  for(i in 1:max_iter) {
+    
+    mse <- lmRMSE(df, setSize)
+    each_mse_tr[i] <-mse[[1]]
+    each_mse_ts[i] <- mse[[2]]
+  }
+  
+  x=mean(each_mse_tr)
+  y=mean(each_mse_ts)
+  return(list(x,y))
+}
+    
+
+rmse_x= NULL
+rmse_y = NULL
+trn_set = NULL
+for(i in 1:19){
+  
+  pct <- (i * 5)/100
+  rmse_xy <- avgRMSE1(moviesOnlyFinal_df, max_iter = 10, setSize = pct)
+  trn_set[i] <-pct
+  rmse_x[i] <- rmse_xy[[1]]
+  rmse_y[i] <- rmse_xy[[2]]
+}
+RMSE_t1 = data.frame(trainingSetPct = trn_set, RMSE_training = rmse_x, RMSE_testing = rmse_y)
+RMSE_t1_mlt <- melt(RMSE_t1, id = "trainingSetPct")
+print(RMSE_t1)
+cat("Dataset Size with best RMSE error on training set:", min(RMSE_t1$RMSE_training), "," ,"Dataset Size with best RMSE error on testing set:", min(RMSE_t1$RMSE_testing))
+RMSE_t1_plt = ggplot(data=RMSE_t1_mlt, aes(x=trainingSetPct, y=value, group=variable, color=variable)) + geom_line()+geom_point()+labs(title="Task 1: Numeric variables" , subtitle = "Movies Only Dataset RMSE training Vs Testing set") 
+print(RMSE_t1_plt)
+colnames(moviesOnlyFinal_df)
+```
+
+numeric variable used: "Runtime", "imdbRating", "imdbVotes", "tomatoRating","tomatoReviews", "tomatoFresh", "tomatoRotten", "tomatoUserMeter", "tomatoUserRating", "tomatoUserReviews", "Budget", "Gross" 
+
+## 2. Feature transformations
+
+
+```{r}
+t2_moviesOnlyFinal_df = moviesOnlyFinal_df
+t2_moviesOnlyFinal_df$exp2_Runtime = (t2_moviesOnlyFinal_df$Runtime)^2
+t2_moviesOnlyFinal_df$exp2_imdbRating = (t2_moviesOnlyFinal_df$imdbRating)^2
+t2_moviesOnlyFinal_df$exp2_imdbVotes = (t2_moviesOnlyFinal_df$imdbVotes)^2
+t2_moviesOnlyFinal_df$exp2_tomatoRating = (t2_moviesOnlyFinal_df$tomatoRating)^2
+t2_moviesOnlyFinal_df$exp2_tomatoReviews = (t2_moviesOnlyFinal_df$tomatoReviews)^2
+t2_moviesOnlyFinal_df$exp2_tomatoFresh = (t2_moviesOnlyFinal_df$tomatoFresh)^2
+t2_moviesOnlyFinal_df$exp2_tomatoRotten = (t2_moviesOnlyFinal_df$tomatoRotten)^2
+t2_moviesOnlyFinal_df$exp2_tomatoUserMeter = (t2_moviesOnlyFinal_df$tomatoUserMeter)^2
+t2_moviesOnlyFinal_df$exp2_tomatoUserRating = (t2_moviesOnlyFinal_df$tomatoUserRating)^2
+t2_moviesOnlyFinal_df$exp2_tomatoUserReviews = (t2_moviesOnlyFinal_df$tomatoUserReviews)^2
+t2_moviesOnlyFinal_df$exp2_Budget = (t2_moviesOnlyFinal_df$Budget)^2
+
+modColFit = lm(Gross~., data = t2_moviesOnlyFinal_df)
+#summary(modColFit) to identify p-value coeficients that have strong relationship with Gross
+modColFit_df = t2_moviesOnlyFinal_df[, c('exp2_imdbRating','exp2_imdbVotes','exp2_tomatoUserRating','exp2_tomatoUserReviews','exp2_Budget')]
+modColFitFinal_df = cbind(moviesOnlyFinal_df, modColFit_df)
+
+rmse_x= NULL
+rmse_y = NULL
+trn_set = NULL
+for(i in 1:19){
+  
+  pct <- (i * 5)/100
+  rmse_xy <- avgRMSE1(modColFitFinal_df, max_iter = 10, setSize = pct)
+  trn_set[i] <-pct
+  rmse_x[i] <- rmse_xy[[1]]
+  rmse_y[i] <- rmse_xy[[2]]
+}
+RMSE_t2 = data.frame(trainingSetPct = trn_set, RMSE_training = rmse_x, RMSE_testing = rmse_y)
+RMSE_t2_mlt <- melt(RMSE_t2, id = "trainingSetPct")
+print(RMSE_t2)
+cat("Dataset Size with best RMSE error on training set:", min(RMSE_t2$RMSE_training), "," ,"Dataset Size with best RMSE error on testing set:", min(RMSE_t2$RMSE_testing))
+RMSE_t2_plt = ggplot(data=RMSE_t2_mlt, aes(x=trainingSetPct, y=value, group=variable, color=variable)) + geom_line()+geom_point()+labs(title="Task 2: Feature transformations" , subtitle = "Movies Only Dataset RMSE training Vs Testing set") 
+print(RMSE_t2_plt)
+```
+
+All the numeric variables uses in task 1 where transformed to the power of 2 (^2).  The transformed result where combined to the original numeric variable that will use to run a new linear regression model in order to identify new features that may have high significant relationship to the response variable(Gross).  The new features where evaluated using the p-value coefficients produced by the lm() model.  Three stars (or asterisks) represent a highly significant p-value. Consequently, a small p-value for the intercept and the slope indicates that we can reject the null hypothesis which allows us to conclude that there is a relationship between Gross and the predictor features.  The resulting new features that have most significant relationship to the response variable(Gross) where again evaluated uisng the Evaluation Strategy.  Running the code multiple time generates different RMSE errors on  both training and testign. Majority of the mulitple runs on this experiment resulted to bettr improvement in the RMSE error compared non-transformed data from task 1.
+
+## 3. Non-numeric variables
+
+Write code that converts genre, actors, directors, and other categorical variables to columns that can be used for regression.
+
+```{r,message=FALSE, warning=FALSE}
+t3=moviesOnlyFinal
+
+t3Corpus_genre = VCorpus(VectorSource(t3$Genre))
+t3Corpus_genre = tm_map(t3Corpus_genre, content_transformer(tolower))
+t3Corpus_genre = tm_map(t3Corpus_genre, removeWords, c("N/A"))
+t3Corpus_genre = tm_map(t3Corpus_genre, removePunctuation)
+t3DTM_genre = DocumentTermMatrix(t3Corpus_genre)
+t3GenreCnt = colSums(as.matrix(t3DTM_genre))
+t3GenreSort = t3GenreCnt[order(t3GenreCnt,decreasing = TRUE)]
+t3_Genre = t3GenreSort[1:5]
+t3_Genre_df = as.data.frame(as.matrix(t3DTM_genre))
+t3_topGenre_df = t3_Genre_df[,names(t3_Genre)] #dim: 3248, 5
+
+t3_dir = t3$Director
+t3_dir  = gsub(" ","_", t3_dir)
+t3_dir = gsub(",_", " ", t3_dir)
+t3Corpus_dir = VCorpus(VectorSource(t3_dir))
+t3Corpus_dir = tm_map(t3Corpus_dir, content_transformer(tolower))
+t3Corpus_dir = tm_map(t3Corpus_dir, removeWords, c("N/A"))
+t3DTM_dir = DocumentTermMatrix(t3Corpus_dir)
+t3DirCnt = colSums(as.matrix(t3DTM_dir))
+t3DirSort = t3DirCnt[order(t3DirCnt,decreasing = TRUE)]
+t3_Director = t3DirSort[1:5]
+t3_Director_df = as.data.frame(as.matrix(t3DTM_dir))
+t3_topDirector_df = t3_Director_df[,names(t3_Director)] #dim: 3248, 5
+
+t3_write = t3$Writer
+t3_write=gsub("\\s*\\([^\\)]+\\)","",as.character(t3_write))
+t3_write  = gsub(" ","_", t3_write)
+t3_write = gsub(",_", " ", t3_write)
+t3Corpus_write = VCorpus(VectorSource(t3_write))
+t3Corpus_write = tm_map(t3Corpus_write, content_transformer(tolower))
+t3Corpus_write = tm_map(t3Corpus_write, removeWords, c("N/A"))
+t3Corpus_write = tm_map(t3Corpus_write, removeWords, c("n/a"))
+t3DTM_write = DocumentTermMatrix(t3Corpus_write)
+t3WriteCnt = colSums(as.matrix(t3DTM_write))
+t3WriteSort = t3WriteCnt[order(t3WriteCnt,decreasing = TRUE)]
+t3_Writer = t3WriteSort[1:5]
+t3_Writer_df = as.data.frame(as.matrix(t3DTM_write))
+t3_topWriter_df = t3_Writer_df[,names(t3_Writer)] #dim: 3248, 5
+
+t3_act = t3$Actors
+t3_act = gsub(" ","_", t3_act)
+t3_act = gsub(",_", " ", t3_act)
+t3Corpus_act = VCorpus(VectorSource(t3_act))
+t3Corpus_act = tm_map(t3Corpus_act, content_transformer(tolower))
+t3Corpus_act = tm_map(t3Corpus_act, removeWords, c("N/A"))
+t3Corpus_act = tm_map(t3Corpus_act, removeWords, c("n/a"))
+t3DTM_act = DocumentTermMatrix(t3Corpus_act)
+t3ActCnt = colSums(as.matrix(t3DTM_act))
+t3ActSort = t3ActCnt[order(t3ActCnt,decreasing = TRUE)]
+t3_Actor = t3ActSort[1:5]
+t3_Actor_df = as.data.frame(as.matrix(t3DTM_act))
+t3_topActor_df = t3_Actor_df[,names(t3_Actor)] #dim: 3248, 5
+
+t3_lang = t3$Language
+t3_lang = gsub(","," ", t3_lang)
+t3Corpus_lang = VCorpus(VectorSource(t3_lang))
+t3Corpus_lang = tm_map(t3Corpus_lang, content_transformer(tolower))
+t3Corpus_lang = tm_map(t3Corpus_lang, removeWords, c("N/A"))
+t3Corpus_lang = tm_map(t3Corpus_lang, removeWords, c("n/a"))
+t3DTM_lang = DocumentTermMatrix(t3Corpus_lang)
+t3LangCnt = colSums(as.matrix(t3DTM_lang))
+t3LangSort = t3LangCnt[order(t3LangCnt,decreasing = TRUE)]
+t3_Language = t3LangSort[1:5]
+t3_Language_df = as.data.frame(as.matrix(t3DTM_lang))
+t3_topLanguage_df = t3_Language_df[,names(t3_Language)] #dim: 3248, 5
+
+t3_count = t3$Country
+t3_count <- gsub(","," ", t3_count)
+t3Corpus_count = VCorpus(VectorSource(t3_count))
+t3Corpus_count = tm_map(t3Corpus_count, content_transformer(tolower))
+t3Corpus_count = tm_map(t3Corpus_count, removeWords, c("N/A"))
+t3Corpus_count = tm_map(t3Corpus_count, removeWords, c("n/a"))
+t3DTM_count = DocumentTermMatrix(t3Corpus_count)
+t3CountCnt = colSums(as.matrix(t3DTM_count))
+t3CountSort = t3CountCnt[order(t3CountCnt,decreasing = TRUE)]
+t3_Country = t3CountSort[1:5]
+t3_Country_df = as.data.frame(as.matrix(t3DTM_count))
+t3_topCountry_df = t3_Country_df[,names(t3_Country)] #dim: 3248, 5
+
+t3_awards = moviesOnlyFinal
+t3_awards$Awards[t3_awards$Awards == 'N/A'] = 0
+t3_awards_1 = data.frame(Awards = t3_awards$Awards)
+t3_awards_1$wins = as.numeric(substr(t3_awards_1$Awards, regexpr("win", t3_awards_1$Awards)-3,regexpr("win", t3_awards_1$Awards)-1))
+t3_awards_1$nominations = as.numeric(substr(t3_awards_1$Awards, regexpr("nomination", t3_awards_1$Awards)-3,regexpr("nomination", t3_awards_1$Awards)-1))
+t3_awards_1$wins[is.na(t3_awards_1$wins)] = 0
+t3_awards_1$nominations[is.na(t3_awards_1$nominations)] = 0
+t3_awards_1$Awards = NULL
+
+t3_meta = moviesOnlyFinal
+t3_Metascore_df =data.frame(Metascore = t3_meta$Metascore)
+t3_Metascore_df$Metascore <- as.numeric(as.character(t3_Metascore_df$Metascore))
+t3_Metascore_df$Metascore[is.na(t3_Metascore_df$Metascore)] = 0
+colnames(t3_Metascore_df) = c("mov_Metascore")
+
+t3_Production = moviesOnlyFinal
+t3_Production$Production[t3_Production$Production == 'N/A'] = 0
+t3_Production_df = data.frame(Production = t3_Production$Production)
+t3_Production_cnt = count(t3_Production_df$Production)
+t3_Production_cnt= t3_Production_cnt[with(t3_Production_cnt, order(freq)), ] #get top 5
+revalue(t3_Production_df$Production, c("Sony Pictures" = 1)) -> t3_Production_df$Production
+revalue(t3_Production_df$Production, c("Warner Bros. Pictures" = 1)) -> t3_Production_df$Production
+revalue(t3_Production_df$Production, c("Universal Pictures" = 1)) -> t3_Production_df$Production
+revalue(t3_Production_df$Production, c("20th Century Fox" = 1)) -> t3_Production_df$Production
+revalue(t3_Production_df$Production, c("Paramount Pictures" = 1)) -> t3_Production_df$Production
+t3_Production_df$Production = t3_Production_df$Production == 1
+t3_Production_df$Production = as.numeric(t3_Production_df$Production)
+colnames(t3_Production_df) = c("mov_Production")
+
+t3_rate = moviesOnlyFinal
+t3_rated_df = data.frame(Rated = t3_rate$Rated)
+t3_rate_cnt = count(t3_rated_df$Rated)
+t3_rate_cnt= t3_rate_cnt[with(t3_rate_cnt, order(freq)), ] #get top 5
+revalue(t3_rated_df$Rated, c("PG-13" = 1)) -> t3_rated_df$Rated
+revalue(t3_rated_df$Rated, c("R" = 1)) -> t3_rated_df$Rated
+revalue(t3_rated_df$Rated, c("PG" = 1)) -> t3_rated_df$Rated
+#revalue(t3_rated_df$Rated, c("NOT RATED" = 1)) -> t3_rated_df$Rated
+revalue(t3_rated_df$Rated, c("G" = 1)) -> t3_rated_df$Rated
+t3_rated_df$Rated = t3_rated_df$Rated == 1
+t3_rated_df$Rated = as.numeric(t3_rated_df$Rated)
+colnames(t3_rated_df) = c("mov_Rated")
+
+convNonNumeric_df= cbind(t3_topGenre_df, t3_topDirector_df, t3_topWriter_df, t3_topActor_df, t3_topLanguage_df, t3_topCountry_df,t3_awards_1, t3_Metascore_df, t3_Production_df,t3_rated_df, Gross = t3$Gross) #dim: 3248,36
+
+rmse_xt3= NULL
+rmse_yt3 = NULL
+trn_sett3 = NULL
+
+for(i in 1:19){
+  
+  pct <- (i * 5)/100
+  rmse_xy <- avgRMSE1(convNonNumeric_df, max_iter = 10, setSize = pct)
+  trn_sett3[i] <-pct
+  rmse_xt3[i] <- rmse_xy[[1]]
+  rmse_yt3[i] <- rmse_xy[[2]]
+}
+RMSE_t3 = data.frame(trainingSetPct = trn_sett3, RMSE_training = rmse_xt3, RMSE_testing = rmse_yt3)
+RMSE_t3_mlt <- melt(RMSE_t3, id = "trainingSetPct")
+print(RMSE_t3)
+cat("Dataset Size with smallest RMSE error on training set:", min(RMSE_t3$RMSE_training), "," ,"Dataset Size with smallest RMSE error on testing set:", min(RMSE_t3$RMSE_testing))
+RMSE_t3_plt=ggplot(data=RMSE_t3_mlt, aes(x=trainingSetPct, y=value, group=variable, color=variable)) + geom_line()+geom_point()+labs(title="Task 3: Non-numeric variables" , subtitle = "Movies Only Dataset RMSE training Vs Testing set") 
+print(RMSE_t3_plt)
+```
+
+Categorical variable used are Genre, Director, Writer, Actor, Language, Country, Awards, Metascore, Production and Rated.  Genre, Director, Writer, Actor, Language, Country contains multiple categorical variables by first pre-processing the data.  This was done by removing N/A's and punctuations, replacing spaces with "_" within each category and converting those to feature using TM package DocumentTermMatrix function and extracting only the top 5 most common categorial values.  Awards where converted to features with the same process in pr1.Rmd by separating both "wins" and "nomination" using regexpr retaining their corresponding award (wins and nominations) numbers.  Metascore where conveted to numeric features by as.numeric since its already containing number values in a string format.  Production and Rated were converted to features by finding out the top 5 most common categorical values and converting those to 1 and 0 otherwise.  All the processed categorical variables where combined in one data frame with numerical categorical features.
+
+## 4. Numeric and categorical variables
+
+
+```{r,message=FALSE, warning=FALSE}
+t4_df = cbind(modColFitFinal_df[,-12], convNonNumeric_df)
+
+modColFit_t4 = lm(Gross~., data = t4_df)
+#summary(modColFit_t4) identify the coefficient p-value that have strong relatonship with Gross
+modColFitdf_t4 = t4_df[, c('drama','action','adventure','stan_lee','germany','australia','wins','nominations')]
+modColFit_df_t4 = cbind(modColFitFinal_df[,-12], modColFitdf_t4,Gross = modColFitFinal_df$Gross)
+modColFit_dttest = cbind()
+
+rmse_xt4= NULL
+rmse_yt4 = NULL
+trn_sett4 = NULL
+
+for(i in 1:19){
+  
+  pct <- (i * 5)/100
+  rmse_xy <- avgRMSE1(modColFit_df_t4, max_iter = 10, setSize = pct)
+  trn_sett4[i] <-pct
+  rmse_xt4[i] <- rmse_xy[[1]]
+  rmse_yt4[i] <- rmse_xy[[2]]
+}
+RMSE_t4 = data.frame(trainingSetPct = trn_sett4, RMSE_training = rmse_xt4, RMSE_testing = rmse_yt4)
+RMSE_t4_mlt <- melt(RMSE_t4, id = "trainingSetPct")
+print(RMSE_t4)
+cat("Dataset Size with smallest RMSE error on training set:", min(RMSE_t4$RMSE_training), "," ,"Dataset Size with smallest RMSE error on testing set:", min(RMSE_t4$RMSE_testing))
+RMSE_t4_plt=ggplot(data=RMSE_t4_mlt, aes(x=trainingSetPct, y=value, group=variable, color=variable)) + geom_line()+geom_point() +labs(title="Task 4: Numeric and categorical variables" , subtitle = "Movies Only Dataset RMSE training Vs Testing set") 
+print(RMSE_t4_plt)
+```
+
+Both both numeric and non-numeric variables from task 2 and 3 were combine to form a new features. The new features where evaluated using the p-value coefficients produced by the lm() model.  Three stars (or asterisks) represent a highly significant p-value. Consequently, a small p-value for the intercept and the slope indicates that we can reject the null hypothesis which allows us to conclude that there is a relationship between Gross and the predictor features.  The resulting new features that have most significant relationship to the response variable(Gross) where again evaluated uisng the Evaluation Strategy.  Running the code multiple time generates different RMSE errors on  both training and testign. All the mulitple runs on this experiment resulted to better improvement in the RMSE error compared task 3.  In addition, the resulting RMSE on 5% training was high that the RMSE values in the Graph for other sample sizes are hard to recognize so a print out of the RMSE dataframe for all the sample sizes are provided for reference.
+
+
+## 5. Additional features
+
+```{r,message=FALSE, warning=FALSE}
+t5_df = cbind(t2_moviesOnlyFinal_df[,-12], convNonNumeric_df)
+modColFit_t5 = lm(Gross~., data = t5_df)
+# #summary(modColFit_t5)
+t5_df$add_steven_soderbergh_budget = (t5_df$steven_soderbergh * t5_df$Budget)
+t5_df$add_clint_eastwood_budget = (t5_df$clint_eastwood * t5_df$Budget)
+t5_df$add_ridley_scott_budget = (t5_df$ridley_scott * t5_df$Budget)
+t5_df$add_woody_allen_budget = (t5_df$woody_allen * t5_df$Budget)
+t5_df$add_shawn_levy_budget = (t5_df$shawn_levy * t5_df$Budget)
+t5_df$add_robert_de_niro_budget = (t5_df$robert_de_niro * t5_df$Budget)
+t5_df$add_mark_wahlberg_budget = (t5_df$mark_wahlberg * t5_df$Budget)
+t5_df$add_owen_wilson_budget = (t5_df$owen_wilson * t5_df$Budget)
+t5_df$add_samuel_l._jackson_budget = (t5_df$samuel_l._jackson * t5_df$Budget)
+t5_df$add_adam_sandler_budget = (t5_df$adam_sandler * t5_df$Budget)
+t5_df$add_english_budget = (t5_df$english * t5_df$Budget)
+t5_df$add_spanish_budget = (t5_df$spanish * t5_df$Budget)
+t5_df$add_french_budget = (t5_df$french * t5_df$Budget)
+t5_df$add_german_budget = (t5_df$german * t5_df$Budget)
+t5_df$add_russian_budget = (t5_df$russian * t5_df$Budget)
+t5_df$add_usa_budget = (t5_df$usa * t5_df$Budget)
+t5_df$add_germany_budget = (t5_df$germany * t5_df$Budget)
+t5_df$add_canada_budget = (t5_df$canada * t5_df$Budget)
+t5_df$add_france_budget = (t5_df$france * t5_df$Budget)
+t5_df$add_australia_budget = (t5_df$australia * t5_df$Budget)
+
+modColFit_t5_df = t5_df
+modColFit_t5_new = lm(Gross~., data = modColFit_t5_df)
+#summary(modColFit_t5_new)
+
+rmse_xt5= NULL
+rmse_yt5 = NULL
+trn_sett5 = NULL
+
+for(i in 1:19){
+  
+  pct <- (i * 5)/100
+  rmse_xy <- avgRMSE1(modColFit_t5_df, max_iter = 10, setSize = pct)
+  trn_sett5[i] <-pct
+  rmse_xt5[i] <- rmse_xy[[1]]
+  rmse_yt5[i] <- rmse_xy[[2]]
+}
+RMSE_t5 = data.frame(trainingSetPct = trn_sett5, RMSE_training = rmse_xt5, RMSE_testing = rmse_yt5)
+RMSE_t5_mlt <- melt(RMSE_t5, id = "trainingSetPct")
+print(RMSE_t5)
+cat("Dataset Size with smallest RMSE error on training set:", min(RMSE_t5$RMSE_training), "," ,"Dataset Size with smallest RMSE error on testing set:", min(RMSE_t5$RMSE_testing))
+RMSE_t5_plt=ggplot(data=RMSE_t5_mlt, aes(x=trainingSetPct, y=value, group=variable, color=variable)) + geom_line()+geom_point()+labs(title="Task 5: Additional features" , subtitle = "Combined data set (numeric, non-numeric, additionl features) \nRMSE training Vs Testing set") 
+print(RMSE_t5_plt)
+
+```
+
+I have added additional features for each of  the top 5 common Actors, Directors, Language and Country and create an interaction on each of these features to the Budget feature because their orginal model p-value coefficient has weak relationship with Gross.  By providing the interaction with budget it increases their model p-value coefficient with Gross which improves the model error compared with task 4.  Also, running multiple times provide different RMSE values.  Majority of the runs I experimented resulted to improve accuracy compared with task 4.  Also, a printout of RMSE value for different sample were provided as reference since the graphs for other RMSE values are unrecognizable due to the high RMSE error for 5$ sample size.
