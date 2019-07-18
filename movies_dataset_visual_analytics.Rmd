@@ -1,0 +1,362 @@
+---
+title: 'Explore and Prepare Data'
+output: 
+  html_notebook: default
+  html_document: default
+
+---
+#### vgacutan
+_Note: This involves getting data ready for analysis and doing some preliminary investigations. The data set was prepared by Dr. Guy Lebanon._
+
+# Data
+
+Explore a dataset that contains information about movies, including ratings, budget, gross revenue and other attributes.
+
+
+```{r}
+x = 1:10
+print(x^2)
+```
+
+Plots appear inline too:
+```{r}
+plot(x, x^2, 'o')
+```
+
+
+## Load data
+
+```{r}
+load('movies_merged')
+```
+
+
+```{r}
+df = movies_merged
+cat("Dataset has", dim(df)[1], "rows and", dim(df)[2], "columns", end="\n", file="")
+colnames(df)
+```
+
+## Load R packages
+
+```{r}
+library(ggplot2)
+library(GGally)
+library(splitstackshape)
+library(plyr)
+```
+
+## 1. Remove non-movie rows
+
+The variable `Type` captures whether the row is a movie, a TV series, or a game. Remove all rows from `df` that do not correspond to movies.
+
+```{r}
+moviesOnly = subset(df, Type == "movie")
+cat("Number of Movie rows remaining:", dim(moviesOnly)[1])
+```
+
+## 2. Process `Runtime` column
+
+The variable `Runtime` represents the length of the title as a string. Write R code to convert it to a numeric value (in minutes) and replace `df$Runtime` with the new numeric column.
+
+```{r}
+p2q1 = moviesOnly
+p2q1$Runtime = substr(p2q1$Runtime,0,nchar(p2q1$Runtime)-4)
+p2q1$Runtime = as.numeric(as.character(p2q1$Runtime))
+str(p2q1[,5])
+```
+
+```{r}
+df_moviesOnly =p2q1[c("Runtime", "Year", "Budget")]
+df_moviesOnly=df_moviesOnly[complete.cases(df_moviesOnly),]
+x.mean <- mean(df_moviesOnly$Runtime)
+
+p1Q2 = ggplot(aes(x = Runtime), data = df_moviesOnly)
+p1Q2 = p1Q2 + geom_histogram(alpha=0.5, color = "grey", binwidth = 5)
+p1Q2 = p1Q2 + geom_vline(xintercept = c(x.mean), color = "red", alpha = 1)
+p1Q2 = p1Q2 + geom_text(x = x.mean, y = 200, label = paste("Mean", round(x.mean, digits = 2), sep = '\n'), color = "red")
+p1Q2 = p1Q2 + labs(title="p1Q2: Runtime Distribution", subtitle = "Movies Only Dataset")
+print(p1Q2)
+
+p2Q2 = qplot(log(Budget), log(Runtime), size=I(1), data =df_moviesOnly) + geom_smooth(method = "loess", se=F) + labs(title="p2Q2: Relationship between Movie Budget Vs Runtime", subtitle = "Movies Only Dataset")
+print(p2Q2)
+
+p3Q2 = ggplot(df_moviesOnly[,c("Year","Runtime")], aes(Year, Runtime)) + geom_point() + geom_smooth(method = "loess") + labs(title="p2Q3: Relationship between Runtime Vs Year", subtitle = "Movies Only Dataset")
+print(p3Q2)
+
+p4Q2 = ggplot(df_moviesOnly[,c("Year","Budget")], aes(Year, Budget)) + geom_point() + geom_smooth(method = "loess") + labs(title="p2Q4: Relationship between Budget Vs Year", subtitle = "Movies Only Dataset")
+print(p4Q2)
+```
+
+
+
+
+Movie Runtime shows a normal distribution(Bell curve) with mean of 106.85 min [p1Q2].  The relationship between movie Budget and Runtime shows a slight increasing slope meaning an increase in Runtime would tend to increase a movie Budget . There are also some exceptions with low Runtime on high budget movies showing as an spars outliers in the graph [p2Q2].  Movie Runtime Vs Year produced is in roller coaster motion increasing from 1915 to about 1950 and decreasing slope to 2000 and comes back up beyong 2001- this is affected by number data points with less movies produced from later year and more movie produced onwards with varying runtimes [p3Q2].  The movie Budget tend to increase overtime since this is affected by dollar inflation.  The overall relationship between movie Budget, Runtime and Year can be seen as increasing slope starting from Year 2001 to 2005. 
+
+## 3. Encode `Genre` column
+
+The column `Genre` represents a list of genres associated with the movie in a string format. Write code to parse each text string into a binary vector with 1s representing the presence of a genre and 0s the absence, and add it to the dataframe as additional columns. Then remove the original `Genre` column.
+
+For example, if there are a total of 3 genres: Drama, Comedy, and Action, a movie that is both Action and Comedy should be represented by a binary vector <0, 1, 1>. Note that you need to first compile a dictionary of all possible genres and then figure out which movie has which genres (you can use the R `tm` package to create the dictionary).
+
+```{r}
+q3_moviesOnly =p2q1 #numeric runtime
+q3_moviesOnly$Genre[q3_moviesOnly$Genre=="N/A"] = NA
+q3_moviesOnly = subset(q3_moviesOnly, !is.na(q3_moviesOnly$Genre))
+s = cSplit(q3_moviesOnly, "Genre", ", ", "long")
+q3moviesOnly = dcast(s, ... ~ Genre, value.var = "Genre", fun.aggregate = length)
+colnames(q3moviesOnly)
+
+```
+
+Plot the relative proportions of movies having the top 10 most common genres.
+
+```{r}
+listAll=sort(unique(unlist(strsplit(as.character(q3_moviesOnly$Genre),", "))))
+listAll_d = list()
+for (column in listAll)
+  listAll_d[[column]] <- sum(q3moviesOnly[,get(column)])
+listAll_d = listAll_d[order(sapply(listAll_d, max))]
+gtab = data.frame(melt(listAll_d))
+gtab = head(gtab[order(gtab$value, decreasing = TRUE),],10)
+gtab$GenrePct = gtab$value/sum(gtab$value)
+print(gtab)
+p3Q1 = ggplot(gtab, aes(L1, GenrePct)) + geom_bar(stat = "identity") + coord_flip() + xlab("Genre") + labs(title="p3Q1: Top10 most common Genres", subtitle = "Movies Only Dataset")
+print(p3Q1)
+```
+
+Examine how the distribution of `Runtime` changes across genres for the top 10 most common genres.
+
+```{r}
+mruntime = subset(q3moviesOnly, !is.na(q3moviesOnly$Runtime))
+runtimeGenre = list()
+for (column in gtab$L1)  #list top10 Genre vs Runtime values 
+  runtimeGenre[[column]] <- mruntime$Runtime[mruntime[,get(column)]==1]
+xGR=data.frame(melt(runtimeGenre))
+
+p3Q2_a = ggplot(xGR, aes(value)) + geom_histogram(binwidth = 3) + facet_grid(L1~., scales = "free_y") + xlab("Runtime") + labs(title="p3Q2: Top10 most common Genres Vs Runtime", subtitle = "Movies Only Dataset")
+print(p3Q2_a)
+
+p3Q2_b = ggplot(xGR, aes(L1, value)) + geom_boxplot()  + coord_flip() + xlab("Genre") + ylab("Runtime") + labs(title="p3Q2: Top10 Genre Vs Runtime BoxPlot")
+print(p3Q2_b)
+
+```
+
+Drama is the top 1st in the common Genre list followed by comedy.  The runtime distribution of the top 10 Genres are normal distibution (bell curve) except for Comedy and Documentary which shows the presence of bimodality in the distribution.  The presence of huge numbers of outliers in all the Genre affects any noticeable trends in the runtime but majority of the top 10 Genre almost have the same movie Runtime median ranges  to approx 90-110 minutes but only few exceptions are Animation and Short. 
+
+## 4. Eliminate mismatched rows
+
+The dataframe was put together by merging two different sources of data and it is possible that the merging process was inaccurate in some cases (the merge was done based on movie title, but there are cases of different movies with the same title). The first source’s release time was represented by the column `Year` (numeric representation of the year) and the second by the column `Released` (string representation of release date).
+
+```{r}
+q4_moviesOnly =q3moviesOnly
+q4_moviesOnly = subset(q4_moviesOnly, !is.na(q4_moviesOnly$Released))
+q4_moviesOnly$Released = as.numeric(substr(q4_moviesOnly$Released, 0,regexpr( "-",q4_moviesOnly$Released)[1]-1))
+yearMatch = subset(q4_moviesOnly, Released == Year | Gross>=0 | Released ==Year+1)
+cat("Movie rows with mismatch Year-Released dates :", nrow(q4_moviesOnly) - nrow(yearMatch))
+```
+
+Removal logic are the following: Remove NA's from the "Released"" column of the original dataset.  Extract  only the Year data in the "Released" dates using regexpr and substr and convert those into numeric.  Compare column "Year" to the converted "Released" column containing only the Year data.  All rows where "Year" column value that are not equal to the "Released" Year column value are mismatch rows and were removed. A little bit of slack on some mismatch rows where movie Gross are greater than or equal to zero are not included for removal.  This ends up removing 1739 rows.
+
+## 5. Explore `Gross` revenue
+
+For the commercial success of a movie, production houses want to maximize Gross revenue. Investigate if Gross revenue is related to Budget, Runtime or Genre in any way.
+
+Note: To get a meaningful relationship, you may have to partition the movies into subsets such as short vs. long duration, or by genre, etc.
+
+```{r}
+q5df = subset(yearMatch, !is.na(Budget) & !is.na(Gross))
+rf_df = data.frame(Budget = q5df$Budget,
+                 Gross = q5df$Gross)
+rf_df_plt = ggplot(rf_df, aes(Budget, Gross)) + geom_point() + geom_smooth(method = "lm") + labs(title="p5Q1: Movie Budget Vs Gross Revenue" , subtitle = "Movies Only Dataset") 
+print(rf_df_plt)
+
+q5df1 = subset(yearMatch, !is.na(Runtime) & !is.na(Gross))
+rf_df1 = data.frame(Runtime = q5df1$Runtime, Gross = q5df1$Gross)
+rf_df1_plt = ggplot(rf_df1, aes(Runtime, Gross)) + geom_point() + geom_smooth(method = "lm") + labs(title="p5Q1: Movie Runtime Vs Gross Revenue" , subtitle = "Movies Only Dataset") 
+print(rf_df1_plt)
+
+gbr_df = data.frame(Genre=character(), Budget=numeric(), Gross=numeric(), stringsAsFactors = FALSE)
+
+for (column in gtab$L1) #top10 Genre list vs Budget vs Gross
+  gbr_df <- rbind(gbr_df, data.frame(Genre = column, Budget= q5df$Budget[q5df[,get(column)] == 1], 
+                             Gross= q5df$Gross[q5df[,get(column)] == 1]))
+
+
+d = ggplot(gbr_df, aes(Budget, Gross, fill= Genre)) + geom_point() + geom_smooth(method = "lm") + facet_grid(~Genre, scales = "free_y")
+cors = ddply(gbr_df, c("Genre"), summarise, cor = round(cor(Budget, Gross), 2))
+dplt = d + geom_text(data=cors, aes(label=paste("r=", cor, sep="")), x=2e+08, y=2e+09)
+print(dplt)
+```
+It is interesting to see in the plot that movie Budget has an impact to the revenues produced by the Movies.  Increase in Budget tend to increase revenue which make sense in reality since there are high budget films that are top Grossers although this can be also be affected by the quality of the story, the cast and other resources.  By plotting the Gross Vs Budget per top 10 common Genre, it can be seen that Action, Adventure and Thriller films has a high R value which the producer can allocate budget to produce quality Action, Thriller and Adventure movies that has the potential to produce high revenues.  Documentary movies also has a high R value that has potential to produce revenue as well.  The overall movie Gross revenue per month tend to follow a sinusoidal pattern where Gross revenue are low on months Jan-Apr, high on months May-June, low on succeding months and comes back high on Nov-Dec. 
+```{r}
+q5 = moviesOnly
+q5df2 = subset(q5, !is.na(Released) & !is.na(Gross))
+q5df2$Released = as.numeric(substr(q5df2$Released,regexpr( "-",q5df2$Released)[1]+1, regexpr( "-",q5df2$Released)[1]+2))
+df_rg = c(q5df2$Gross, q5df2$Released)
+df_rg=data.frame(q5df2[c("Released", "Gross")])
+
+df_rg_plt=ggplot(df_rg, aes(x=Released, y=Gross)) + geom_point(aes(colour=Gross))+ scale_x_continuous(breaks = seq(1,12, by=1)) +  scale_colour_gradient(low = "red", high = "green") + xlab("Released Month") + labs(title="p5Q2: Movie Released Month Vs Gross Revenue" , subtitle = "Movies Only Dataset") 
+print(df_rg_plt)
+```
+
+## 6. Process `Awards` column
+
+The variable `Awards` describes nominations and awards in text format. Convert it to 2 numeric columns, the first capturing the number of wins, and the second capturing nominations. Replace the `Awards` column with these new columns, and then study the relationship of `Gross` revenue with respect to them.
+
+Note that the format of the `Awards` column is not standard; you may have to use regular expressions to find the relevant values.
+
+```{r}
+q6 = yearMatch
+q6$Awards[q6$Awards == 'N/A'] = 0
+q6df = data.frame(Awards = q6$Awards, Gross = q6$Gross)
+q6df$wins = as.numeric(substr(q6df$Awards, regexpr("win", q6df$Awards)-3,regexpr("win", q6df$Awards)-1))
+q6df$nominations = as.numeric(substr(q6df$Awards, regexpr("nomination", q6df$Awards)-3,regexpr("nomination", q6df$Awards)-1))
+cat("valid/non-zero wins or nominations :", nrow(subset(q6df, !is.na(nominations) |!is.na(wins))))
+winsNom_tab = q6df[complete.cases(q6df),]
+str(winsNom_tab[,-1]) 
+```
+Dataset used is the movie only data set from question 4. Number of wins and nominations in the Award column are extracted using regexpr and substr.  Awards column char "N/A" values are converte to 0, then extracting the numbers before the "wins"" and "nomination" charaters, separating those to two columns and converting the result to numeric.  Valid/non-zero wind ends up to 12905 rows.
+
+```{r}
+q6df1 = subset(q6df,!is.na(Gross))
+q6df1[is.na(q6df1)] <- 0 #convering all NA in wins and nominations column to 0
+
+q5df1_plt = qplot(log(Gross), wins, size=I(1), data = q6df1, geom = "jitter") +labs(title="p5Q2: Gross Revenue Vs Award Winnings" , subtitle = "Movies Only Dataset") 
+print(q5df1_plt)
+
+q5df1_plt1 = qplot(log(Gross), nominations, size=I(1), data = q6df1, geom = "jitter")+labs(title="p5Q2: Gross Revenue Vs Award Nominations" , subtitle = "Movies Only Dataset") 
+print(q5df1_plt1)
+```
+
+Movies that are Award winner and received nominations had increased in revenues.  This make sense because movies that received more Award winnings and nominations are good quality movies since these awards are being streamlined by movie Academy boards. Good quality movies tend to increase movie Gross revenues.
+
+## 7. Movie ratings from IMDb and Rotten Tomatoes
+```{r}
+q7 = yearMatch
+q7df = data.frame(Gross = q7$Gross, ImdbRating = q7$imdbRating, tomatoRating = q7$tomatoRating, tomatoUserRating = q7$tomatoUserRating)
+q7df =q7df[complete.cases(q7df),]
+
+q7df_plt1= ggplot(q7df, aes(x=ImdbRating, y=tomatoRating)) + geom_point() + geom_smooth(method = "loess") + labs(title="Movie Tomato Rating Vs IMDb Rating", subtitle = "Movies Only Dataset")
+print(q7df_plt1)
+
+q7df_plt2= ggplot(q7df, aes(x=ImdbRating, y=tomatoUserRating)) + geom_point() + geom_smooth(method = "loess") + labs(title="Movie Tomato User Rating Vs IMDb Rating", subtitle = "Movies Only Dataset")
+print(q7df_plt2)
+
+q7df_plt3= ggplot(q7df, aes(x=ImdbRating, y=Gross)) + geom_point() + geom_smooth(method = "loess") + labs(title="Movie Tomato User Rating Vs IMDb Rating", subtitle = "Movies Only Dataset")
+print(q7df_plt3)
+
+q7df_plt4= ggplot(q7df, aes(x=tomatoRating, y=Gross)) + geom_point() + geom_smooth(method = "loess") + labs(title="Movie Tomato User Rating Vs IMDb Rating", subtitle = "Movies Only Dataset")
+print(q7df_plt4)
+```
+The disparity is not that high between IMDb rating and tomato ratings.   They are both propotional by looking at the trends in the graph- propotional being if one of them increases the other rating increases.   As per description in the website, IMDB weights the average based on how people fill out ratings and to avoid "vote stuffing" (weighted average rating).  Rotten tomatoes on the other hand, count the percentage of users that rate the movie at at a certain threshold that clearly think the movie is "good".  In terms of Gross revenue produce per ratings, movie Gross revenue increase with increase in rating. IMDB data points with high Gross revenue are more focused within 6.0 to 7.0 rating while tomato rating are more scattered within around 3.5 to 7.5 becaue tomato rating threshold for "good" movies" starts at 3.5 and higher. 
+
+## 8. Ratings and awards
+
+These ratings typically reflect the general appeal of the movie to the public or gather opinions from a larger body of critics. Whereas awards are given by professional societies that may evaluate a movie on specific attributes, such as artistic performance, screenplay, sound design, etc.
+```{r}
+q8 = yearMatch
+#q6df = subset(q6, !is.na(Gross))
+q8$Awards[q6$Awards == 'N/A'] = 0
+q8df = data.frame(Awards = q8$Awards, ImdbRating = q8$imdbRating, tomatoRating = q8$tomatoRating, tomatoUserRating = q8$tomatoUserRating )
+
+q8df$wins = as.numeric(substr(q6df$Awards, regexpr("win", q6df$Awards)-3,regexpr("win", q6df$Awards)-1))
+q8df$nominations = as.numeric(substr(q6df$Awards, regexpr("nomination", q6df$Awards)-3,regexpr("nomination", q6df$Awards)-1))
+q8df =q8df[complete.cases(q8df),]
+q8_tab =q8df[, -1]
+q8_tab_plt1 = ggpairs(q8_tab) #correlation matrix
+print(q8_tab_plt1)
+
+q8_tab_plt2 = ggplot(q8_tab, aes(x=ImdbRating, y=wins)) + geom_point(aes(colour=wins)) + scale_colour_gradient(low = "red", high = "green")
+print(q8_tab_plt2)
+
+q8_tab_plt2 = ggplot(q8_tab, aes(x=tomatoRating, y=wins)) + geom_point(aes(colour=wins)) + scale_colour_gradient(low = "red", high = "green")
+print(q8_tab_plt2)
+
+
+```
+There are noticeable correlation between the different rating (IMDb and Tomato) againts the number of Awards (wins and nomination) recived.  High IMDb rating around 6.5 to 7.5 received high numbers of Award winnings and nominations.  Tomato ratings with high Award winning and nominations are within 7.5 to 8.5.  The disparity between the rating are not that high.
+
+## 9. Expected insights
+
+```{r}
+q9_df = data.frame(Language = yearMatch$Language, Budget = yearMatch$Budget, Gross = yearMatch$Gross)
+a = cSplit(q9_df, "Language", ", ", "long")
+q9_df = dcast(a, ... ~ Language, value.var = "Language", fun.aggregate = length)
+langAll=sort(unique(unlist(strsplit(as.character(yearMatch$Language),", "))))
+langAll_dct = list()
+langAll = langAll[langAll!= " Ancient (to 1453)"]
+langAll = langAll[langAll!= " Old"]
+for (column in langAll)
+  langAll_dct[[column]] <- sum(q9_df[,get(column)])
+langAll_dct = langAll_dct[order(sapply(langAll_dct, max))]
+langAll_dct_tab = na.omit(data.frame(melt(langAll_dct)))
+langAll_dct_tab[langAll_dct_tab=="N/A"] = NA
+langAll_dct_tab=langAll_dct_tab[complete.cases(langAll_dct_tab),]
+langAll_dct_tab = head(langAll_dct_tab[order(langAll_dct_tab$value, decreasing = TRUE),],10)
+langAll_dct_tab$LanguagePct = langAll_dct_tab$value/sum(langAll_dct_tab$value)
+print(langAll_dct_tab)
+
+p9Q1_plt = ggplot(langAll_dct_tab, aes(L1, LanguagePct)) + geom_bar(stat = "identity") + coord_flip() + xlab("Movie Language") + labs(title="p9Q1: Top10 most common movies Langues", subtitle = "Movies Only Dataset")
+print(p9Q1_plt)
+q9_df1 = data.frame(Language=character(), Gross=numeric(), Budget=numeric(), stringsAsFactors = FALSE)
+
+for (column in langAll_dct_tab$L1) 
+  q9_df1 <- rbind(q9_df1, data.frame(Language = column, Gross= q9_df$Gross[q9_df[,get(column)] == 1], 
+                             Budget= q9_df$Budget[q9_df[,get(column)] == 1]))
+
+dat = ggplot(q9_df1, aes(Budget, Gross, fill= Language)) + geom_point() + geom_smooth(method = "lm") + facet_grid(~Language, scales = "free_y")
+cors = ddply(q9_df1, c("Language"), summarise, cor = round(cor(Budget, Gross), 2))
+dat_dplt = dat + geom_text(data=cors, aes(label=paste("r=", cor, sep="")), x=2e+08, y=2e+09)
+print(dat_dplt)
+```
+
+Movies in English language are the most common movies in the data set.  This constitutes around 75% of the total common top 10 language movies followed by French at 59%.
+
+Both movie Gross and Budget are highly coorrelated across all the top 10 movie languages.  Inpsite of the English movies being the top commong movie languages, it has the lowest correlation at r=74% and Italian is the highest at r=82%.  It does make sense that high budget movies tend to produces good revenues as more dollar can be allocated to resources like good/famous Actors, movie locations, equipements, special effects and staffs.  There are also some exceptions were few high budgeted English movies that where flopped for some reason which affect the r value for the English movies to be slightly lower than the rest the top ten common movie languages.    
+
+
+## 10. Unexpected insight
+
+```{r}
+q10_df = data.frame(Language = yearMatch$Language, Budget = yearMatch$Budget, Gross = yearMatch$Gross, ImdbRating = yearMatch$imdbRating, tomatoRating = yearMatch$tomatoRating, tomatoUserRating = yearMatch$tomatoUserRating)
+b = cSplit(q10_df, "Language", ", ", "long")
+q10_df = dcast(b, ... ~ Language, value.var = "Language", fun.aggregate = length)
+
+q10_df1 = data.frame(Language=character(), Budget=numeric(), Gross=numeric(), ImdbRating=numeric(), tomatoRating=numeric(), tomatoUserRating=numeric(),  stringsAsFactors = FALSE)
+
+for (column in langAll_dct_tab$L1)
+  q10_df1 <- rbind(q10_df1, data.frame(Language = column, Budget= q10_df$Budget[q10_df[,get(column)] == 1],
+                                     Gross= q10_df$Gross[q10_df[,get(column)] == 1],#, 
+                                     ImdbRating = q10_df$ImdbRating[q10_df[,get(column)] == 1],
+                                     tomatoRating = q10_df$tomatoRating[q10_df[,get(column)] == 1], 
+                                     tomatoUserRating = q10_df$tomatoUserRating[q10_df[,get(column)] == 1]))
+q10_df1 =q10_df1[complete.cases(q10_df1),]
+
+dat10 = ggplot(q10_df1, aes(ImdbRating, tomatoRating, fill= Language)) + geom_point() + geom_smooth(method = "lm") + facet_grid(~Language, scales = "free_y")
+cors = ddply(q10_df1, c("Language"), summarise, cor = round(cor(ImdbRating, tomatoRating), 2))
+dat10_dplt = dat10 + geom_text(data=cors, aes(label=paste("r=", cor, sep="")), x=3, y=1)
+print(dat10_dplt)
+
+m1 = ddply(q10_df1, .(Language), summarize, med = median(ImdbRating))
+p10_plt1 = ggplot(q10_df1, aes(x=Language,y=  ImdbRating)) + geom_boxplot() + geom_text(data = m1, aes(y = med, label = round(med,2)),size = 3, vjust = -0.5) + labs(title="p10Q1: Top10 most common movies Langues Vs ImdbRating", subtitle = "Movies Only Dataset")
+print(p10_plt1)
+  
+
+m2 = ddply(q10_df1, .(Language), summarize, med = median(tomatoRating))
+p10_plt2 = ggplot(q10_df1, aes(x=Language,y=  tomatoRating)) + geom_boxplot() + geom_text(data = m2, aes(y = med, label = round(med,2)),size = 3,vjust = -0.5) + 
+  labs(title="p10Q1: Top10 most common movies Langues Vs tomatoRating", subtitle = "Movies Only Dataset")
+print(p10_plt2)
+
+m3 = ddply(q10_df1, .(Language), summarize, med = median(tomatoUserRating))
+p10_plt3 = ggplot(q10_df1, aes(x=Language,y=  tomatoUserRating)) + geom_boxplot() + geom_text(data = m3, aes(y = med, label = round(med,2)),size = 3,vjust = -0.5) + 
+  labs(title="p10Q1: Top10 most common movies Langues Vs tomatoUserRating", subtitle = "Movies Only Dataset")
+print(p10_plt3)
+
+
+```
+
+Surprising to see that Chinese movies in Mandarain or Cantonese langueages are not in the top ten common movies in the dataset.  Inspite of being a large country, I know that there lots of movies produced per year and have seen a lot of them that were dubbed in English like those famous Actors like Jackie Chan, Bruce Lee or Jet Li.  I think that further investgation are needed about the Language as category in the database i.e is the language are based on the orignal language spoken or dubbed in English?.
+      In addition, based on the above box plots, surprising to see that among the common top ten language, English language movies is one of among the lowest in all the ratings inspite of being on the top common movie languages.  English language movies IMDb rating median of 6.5 (highest are Hindi, Polish at 7.15 & 7 ) ,  English language movies Tomato rating median of 5.8 (highest is Polish at 6.55) and  English language movies Tomato User rating median of 3.3 (highest are Hindi, Polish at 3.65 & 3.55 ).  Both Hindi or Polish seems to be consistently highesh among for all the 3 ratings.
+
+
